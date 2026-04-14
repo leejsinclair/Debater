@@ -68,7 +68,7 @@ type AppStatus = 'idle' | 'loading' | 'running' | 'complete' | 'error';
 export default function App() {
   const [question, setQuestion] = useState('');
   const [frameworks, setFrameworks] = useState<FrameworkConfig>(DEFAULT_FRAMEWORKS);
-  const [, setSession] = useState<DebateSession | null>(null);
+  const [session, setSession] = useState<DebateSession | null>(null);
   const [turns, setTurns] = useState<DebateTurn[]>([]);
   const [status, setStatus] = useState<AppStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -223,6 +223,9 @@ export default function App() {
         )}
         {status === 'complete' && (
           <div className="text-green-600 text-sm mb-4 font-medium">✅ Debate complete!</div>
+        )}
+        {session && (
+          <div className="text-xs text-gray-400 mb-4">Session ID: {session.id}</div>
         )}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm mb-4">

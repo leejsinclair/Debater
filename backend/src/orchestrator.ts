@@ -26,12 +26,12 @@ const STATE_SEQUENCE: DebateState[] = [
   'COMPLETE',
 ];
 
-function nextState(current: DebateState, socratiEnabled: boolean): DebateState {
+function nextState(current: DebateState, socraticEnabled: boolean): DebateState {
   if (current === 'IDLE') return 'ROUND_1_AI1';
   const idx = STATE_SEQUENCE.indexOf(current);
   if (idx === -1 || idx === STATE_SEQUENCE.length - 1) return 'COMPLETE';
   let next = STATE_SEQUENCE[idx + 1];
-  if (next === 'SOCRATIC_INTERLUDE' && !socratiEnabled) {
+  if (next === 'SOCRATIC_INTERLUDE' && !socraticEnabled) {
     next = STATE_SEQUENCE[idx + 2];
   }
   return next;

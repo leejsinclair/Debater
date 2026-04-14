@@ -8,7 +8,7 @@ import {
   advanceDebate,
   runFullDebate,
 } from './orchestrator';
-import { StartDebateRequest } from './types';
+import { StartDebateRequest, PersonaConfig } from './types';
 
 dotenv.config();
 
@@ -33,7 +33,7 @@ app.post('/api/debates', (req: Request, res: Response) => {
   try {
     const session = createSession(
       body.question.trim(),
-      (body.participants as Parameters<typeof createSession>[1]) ?? [],
+      (body.participants ?? []) as Partial<PersonaConfig>[],
       body.frameworks ?? {},
       body.outputFormat ?? 'batch'
     );
