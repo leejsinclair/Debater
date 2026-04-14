@@ -48,7 +48,7 @@ export interface DebateSession {
   config: DebateConfig;
   state: DebateState;
   history: DebateTurn[];
-  socratiQuestions?: string[];
+  socraticQuestions?: string[];
   createdAt: number;
   updatedAt: number;
 }

@@ -68,7 +68,7 @@ type AppStatus = 'idle' | 'loading' | 'running' | 'complete' | 'error';
 export default function App() {
   const [question, setQuestion] = useState('');
   const [frameworks, setFrameworks] = useState<FrameworkConfig>(DEFAULT_FRAMEWORKS);
-  const [session, setSession] = useState<DebateSession | null>(null);
+  const [, setSession] = useState<DebateSession | null>(null);
   const [turns, setTurns] = useState<DebateTurn[]>([]);
   const [status, setStatus] = useState<AppStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -134,9 +134,6 @@ export default function App() {
   }, []);
 
   const isRunning = status === 'running' || status === 'loading';
-
-  // suppress unused variable warning — session is kept for future use
-  void session;
 
   return (
     <div className="min-h-screen bg-gray-100">
