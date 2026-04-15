@@ -1,6 +1,6 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { DebateSession, DebateTurn, FrameworkConfig } from './types';
-import { createDebate, runDebate } from './api';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { DebateSession, DebateTurn, FrameworkConfig, AuthStatus } from './types';
+import { createDebate, runDebate, getAuthStatus, startAuth } from './api';
 
 const STATE_LABELS: Record<string, string> = {
   ROUND_1_AI1: 'Round 1 — Opening (Toulmin structure)',
@@ -26,6 +26,11 @@ const DEFAULT_FRAMEWORKS: FrameworkConfig = {
   enableToulminStructure: true,
   synthesisRound: 5,
 };
+
+const PROVIDERS: { id: 'chatgpt' | 'gemini'; label: string; url: string }[] = [
+  { id: 'chatgpt', label: 'ChatGPT', url: 'chatgpt.com' },
+  { id: 'gemini', label: 'Gemini', url: 'gemini.google.com' },
+];
 
 function TurnCard({ turn }: { turn: DebateTurn }) {
   const colorClass = PARTICIPANT_COLORS[turn.participantId] ?? 'bg-gray-50 border-gray-200';
@@ -64,6 +69,7 @@ function FrameworkToggle({
 }
 
 type AppStatus = 'idle' | 'loading' | 'running' | 'complete' | 'error';
+type AuthingProvider = 'chatgpt' | 'gemini' | null;
 
 export default function App() {
   const [question, setQuestion] = useState('');
@@ -72,12 +78,43 @@ export default function App() {
   const [turns, setTurns] = useState<DebateTurn[]>([]);
   const [status, setStatus] = useState<AppStatus>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<Record<string, AuthStatus>>({});
+  const [authingProvider, setAuthingProvider] = useState<AuthingProvider>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  // Load auth status on mount
+  useEffect(() => {
+    getAuthStatus()
+      .then(setAuthStatus)
+      .catch(() => {});
+  }, []);
+
+  const refreshAuthStatus = useCallback(() => {
+    getAuthStatus()
+      .then(setAuthStatus)
+      .catch(() => {});
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
+
+  const handleAuth = useCallback(
+    async (provider: 'chatgpt' | 'gemini') => {
+      setAuthingProvider(provider);
+      setError(null);
+      try {
+        await startAuth(provider);
+        await refreshAuthStatus();
+      } catch (err: unknown) {
+        setError(String(err));
+      } finally {
+        setAuthingProvider(null);
+      }
+    },
+    [refreshAuthStatus]
+  );
 
   const handleStart = useCallback(async () => {
     if (!question.trim()) return;
@@ -134,17 +171,63 @@ export default function App() {
   }, []);
 
   const isRunning = status === 'running' || status === 'loading';
+  const allAuthenticated = PROVIDERS.every((p) => authStatus[p.id]?.authenticated);
 
   return (
     <div className="min-h-screen bg-gray-100">
       <header className="bg-indigo-700 text-white py-4 px-6 shadow">
         <h1 className="text-2xl font-bold tracking-tight">⚔️ Debater</h1>
         <p className="text-indigo-200 text-sm mt-1">
-          Multi-round AI debate orchestrator with structured reasoning frameworks
+          Multi-round AI debate via browser automation — no API keys required
         </p>
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8">
+        {/* Authentication panel */}
+        <section className="bg-white rounded-xl shadow p-6 mb-6">
+          <h2 className="text-lg font-semibold mb-1">Browser Authentication</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            Click <strong>Log in</strong> to open a browser window and sign in to each AI service.
+            Your session is saved so you only need to do this once.
+          </p>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            {PROVIDERS.map((p) => {
+              const auth = authStatus[p.id];
+              const isAuthing = authingProvider === p.id;
+              return (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between flex-1 border rounded-lg p-3"
+                >
+                  <div>
+                    <span className="font-medium text-sm">{p.label}</span>
+                    <span className="text-xs text-gray-400 ml-2">{p.url}</span>
+                    <div className="text-xs mt-0.5">
+                      {auth?.authenticated ? (
+                        <span className="text-green-600">✓ Authenticated</span>
+                      ) : (
+                        <span className="text-amber-600">⚠ Not authenticated</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleAuth(p.id)}
+                    disabled={isAuthing || isRunning}
+                    className="ml-4 px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  >
+                    {isAuthing ? 'Opening browser\u2026' : auth?.authenticated ? 'Re-authenticate' : 'Log in'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          {!allAuthenticated && (
+            <p className="text-xs text-amber-600 mt-3">
+              ⚠ Both services must be authenticated before starting a debate.
+            </p>
+          )}
+        </section>
+
         {/* Question input */}
         <section className="bg-white rounded-xl shadow p-6 mb-6">
           <h2 className="text-lg font-semibold mb-3">Debate Question</h2>
@@ -187,10 +270,10 @@ export default function App() {
           <div className="mt-4 flex gap-3">
             <button
               onClick={handleStart}
-              disabled={isRunning || !question.trim()}
+              disabled={isRunning || !question.trim() || !allAuthenticated}
               className="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
-              {status === 'loading' ? 'Starting…' : 'Start Debate'}
+              {status === 'loading' ? 'Starting\u2026' : 'Start Debate'}
             </button>
             {isRunning && (
               <button
@@ -218,11 +301,11 @@ export default function App() {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
             </svg>
-            Debate in progress…
+            Debate in progress — browser windows are automated…
           </div>
         )}
         {status === 'complete' && (
-          <div className="text-green-600 text-sm mb-4 font-medium">✅ Debate complete!</div>
+          <div className="text-green-600 text-sm mb-4 font-medium">✓ Debate complete!</div>
         )}
         {session && (
           <div className="text-xs text-gray-400 mb-4">Session ID: {session.id}</div>

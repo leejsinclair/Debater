@@ -1,6 +1,25 @@
-import { DebateSession, FrameworkConfig } from './types';
+import { DebateSession, FrameworkConfig, AuthStatus } from './types';
 
 const BASE = '/api';
+
+export async function getAuthStatus(): Promise<Record<string, AuthStatus>> {
+  const res = await fetch(`${BASE}/browser/auth/status`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function startAuth(
+  provider: 'chatgpt' | 'gemini',
+  timeoutMs = 300_000
+): Promise<{ success: boolean; provider: string; savedTo: string }> {
+  const res = await fetch(`${BASE}/browser/auth/${provider}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ timeoutMs }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
 
 export async function createDebate(
   question: string,
@@ -61,3 +80,4 @@ export async function getDebate(sessionId: string): Promise<DebateSession> {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+

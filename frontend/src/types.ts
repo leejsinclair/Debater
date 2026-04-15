@@ -30,7 +30,11 @@ export interface DebateSession {
   id: string;
   config: {
     question: string;
-    participants: { id: string; displayName: string; apiProvider: string; model: string }[];
+    participants: {
+      id: string;
+      displayName: string;
+      browserProvider: 'chatgpt' | 'gemini';
+    }[];
     maxRounds: number;
     frameworks: FrameworkConfig;
     outputFormat: 'stream' | 'batch';
@@ -40,3 +44,9 @@ export interface DebateSession {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface AuthStatus {
+  authenticated: boolean;
+  path: string;
+}
+

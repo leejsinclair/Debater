@@ -21,9 +21,12 @@ export interface FrameworkConfig {
 export interface PersonaConfig {
   id: string;
   displayName: string;
-  apiProvider: 'openai' | 'google' | 'anthropic';
-  model: string;
-  apiKey: string;
+  /** Which web chat interface to automate */
+  browserProvider: 'chatgpt' | 'gemini';
+  /** Path to a Playwright storageState JSON for pre-authenticated sessions */
+  authStatePath?: string;
+  /** Run browser in headless mode (default: false) */
+  headless?: boolean;
   systemPromptTemplate: string;
 }
 

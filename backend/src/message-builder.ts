@@ -1,6 +1,4 @@
 import { PersonaConfig, DebateTurn, FrameworkConfig, DebateState } from './types';
-import { Message as OpenAIMessage } from './api-clients/openai-client';
-import { Message as GeminiMessage } from './api-clients/gemini-client';
 import {
   round1OpeningPrompt,
   round1CounterPrompt,
@@ -12,13 +10,13 @@ import {
   formatHistory,
 } from './prompts';
 
-function buildSystemPrompt(persona: PersonaConfig, state: DebateState): string {
+function buildSystemContext(persona: PersonaConfig, state: DebateState): string {
   return persona.systemPromptTemplate
     .replace('{{round}}', state)
     .replace('{{displayName}}', persona.displayName);
 }
 
-function buildUserPrompt(
+function buildUserContent(
   state: DebateState,
   personas: PersonaConfig[],
   question: string,
@@ -50,34 +48,21 @@ function buildUserPrompt(
   }
 }
 
-export function buildOpenAIMessages(
+/**
+ * Builds the single plain-text prompt that gets typed into the web chat interface.
+ * The system context (persona + round) is prepended to the task content because
+ * browser-based chat UIs do not support a separate system role.
+ */
+export function buildPrompt(
   state: DebateState,
   activePersona: PersonaConfig,
   personas: PersonaConfig[],
   question: string,
   history: DebateTurn[],
   frameworks: FrameworkConfig
-): OpenAIMessage[] {
-  const systemContent = buildSystemPrompt(activePersona, state);
-  const userContent = buildUserPrompt(state, personas, question, history, frameworks);
-  return [
-    { role: 'system', content: systemContent },
-    { role: 'user', content: userContent },
-  ];
+): string {
+  const systemContext = buildSystemContext(activePersona, state);
+  const userContent = buildUserContent(state, personas, question, history, frameworks);
+  return `${systemContext}\n\n${userContent}`;
 }
 
-export function buildGeminiMessages(
-  state: DebateState,
-  activePersona: PersonaConfig,
-  personas: PersonaConfig[],
-  question: string,
-  history: DebateTurn[],
-  frameworks: FrameworkConfig
-): { systemInstruction: string; contents: GeminiMessage[] } {
-  const systemInstruction = buildSystemPrompt(activePersona, state);
-  const userContent = buildUserPrompt(state, personas, question, history, frameworks);
-  return {
-    systemInstruction,
-    contents: [{ role: 'user', parts: [{ text: userContent }] }],
-  };
-}
