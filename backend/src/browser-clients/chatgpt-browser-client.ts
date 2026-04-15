@@ -1,14 +1,15 @@
 import { BrowserContext, Page } from 'playwright';
+import { findElement } from './browser-manager';
 
-const CHATGPT_URL = 'https://chatgpt.com/';
+export const CHATGPT_URL = 'https://chatgpt.com/';
 
 /** Selectors, ordered most-specific to broadest, tried in sequence */
-const INPUT_SELECTORS = [
+export const INPUT_SELECTORS = [
   '#prompt-textarea',
   'div[contenteditable="true"][data-id]',
   'div[contenteditable="true"]',
 ];
-const SEND_SELECTORS = [
+export const SEND_SELECTORS = [
   'button[data-testid="send-button"]',
   'button[aria-label="Send prompt"]',
   'button[aria-label="Send message"]',
@@ -24,14 +25,6 @@ const NAVIGATION_TIMEOUT = 60_000;
 const RESPONSE_TIMEOUT = 120_000;
 const POLL_INTERVAL = 1_500;
 const STABLE_CHECK_REPEATS = 3;
-
-async function findElement(page: Page, selectors: string[]): Promise<string | null> {
-  for (const sel of selectors) {
-    const el = page.locator(sel).first();
-    if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) return sel;
-  }
-  return null;
-}
 
 async function waitForSendButtonReady(page: Page): Promise<void> {
   // Wait for stop button to disappear (streaming in progress)

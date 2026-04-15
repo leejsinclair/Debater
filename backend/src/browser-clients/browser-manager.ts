@@ -61,6 +61,22 @@ export async function saveContextState(
 }
 
 /**
+ * Iterates over a list of CSS selectors and returns the first one whose element
+ * is visible on the page, or `null` if none match within the given timeout.
+ */
+export async function findElement(
+  page: import('playwright').Page,
+  selectors: string[],
+  visibilityTimeout = 2_000
+): Promise<string | null> {
+  for (const sel of selectors) {
+    const el = page.locator(sel).first();
+    if (await el.isVisible({ timeout: visibilityTimeout }).catch(() => false)) return sel;
+  }
+  return null;
+}
+
+/**
  * Closes the shared browser instance.
  */
 export async function closeBrowser(): Promise<void> {

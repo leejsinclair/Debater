@@ -1,14 +1,15 @@
 import { BrowserContext, Page } from 'playwright';
+import { findElement } from './browser-manager';
 
-const GEMINI_URL = 'https://gemini.google.com/';
+export const GEMINI_URL = 'https://gemini.google.com/';
 
-const INPUT_SELECTORS = [
+export const INPUT_SELECTORS = [
   'div.ql-editor[contenteditable="true"]',
   'rich-textarea .ql-editor',
   'div[contenteditable="true"][data-placeholder]',
   'textarea[aria-label]',
 ];
-const SEND_SELECTORS = [
+export const SEND_SELECTORS = [
   'button[aria-label="Send message"]',
   'button.send-button',
   'button[data-mat-icon-name="send"]',
@@ -25,14 +26,6 @@ const NAVIGATION_TIMEOUT = 60_000;
 const RESPONSE_TIMEOUT = 120_000;
 const POLL_INTERVAL = 1_500;
 const STABLE_CHECK_REPEATS = 3;
-
-async function findElement(page: Page, selectors: string[]): Promise<string | null> {
-  for (const sel of selectors) {
-    const el = page.locator(sel).first();
-    if (await el.isVisible({ timeout: 2_000 }).catch(() => false)) return sel;
-  }
-  return null;
-}
 
 async function typeIntoEditor(page: Page, inputSel: string, text: string): Promise<void> {
   const input = page.locator(inputSel).first();
