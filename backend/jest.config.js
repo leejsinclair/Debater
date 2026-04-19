@@ -3,5 +3,6 @@ module.exports = {
   testEnvironment: 'node',
   // Default test run excludes browser UI tests (they require a real browser + network)
   testMatch: ['**/__tests__/**/*.test.ts'],
-  testPathIgnorePatterns: ['browser-ui\\.test\\.ts'],
+  testPathIgnorePatterns:
+    process.env.JEST_BROWSER === 'true' ? [] : ['browser-ui\\.test\\.ts'],
 };
