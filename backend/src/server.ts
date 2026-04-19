@@ -20,6 +20,11 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
+const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? FRONTEND_ORIGIN)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
 
 const AUTH_STATE_DIR = process.env.AUTH_STATE_DIR ?? path.join(process.cwd(), 'auth-states');
 const AUTH_PATHS: Record<string, string> = {
@@ -31,7 +36,18 @@ const PROVIDER_URLS: Record<string, string> = {
   gemini: 'https://gemini.google.com/',
 };
 
-app.use(cors());
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || CORS_ORIGINS.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+    methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  })
+);
 app.use(express.json());
 
 /** Simple in-memory rate limiter: max requests per window per IP. */
@@ -64,11 +80,10 @@ app.get(
   '/api/browser/auth/status',
   rateLimit(30, 60_000),
   (_req: Request, res: Response) => {
-    const status: Record<string, { authenticated: boolean; path: string }> = {};
+    const status: Record<string, { authenticated: boolean }> = {};
     for (const [provider, authPath] of Object.entries(AUTH_PATHS)) {
       status[provider] = {
         authenticated: fs.existsSync(authPath),
-        path: authPath,
       };
     }
     res.json(status);
@@ -253,24 +268,23 @@ app.post(
       }
 
       await saveContextState(ctx!, authPath);
-      await ctx!.close();
 
-      res.json({ success: true, provider, savedTo: authPath });
+      res.json({ success: true, provider });
     } catch (err: unknown) {
       const errMsg = String(err);
       console.error(`[Auth] ✗ Error for ${provider}: ${errMsg}`);
-      // Try to close the page/context if still open
+      res.status(500).json({ error: errMsg });
+    } finally {
       try {
         if (page && !page.isClosed()) await page.close();
       } catch {
-        // Ignore cleanup errors while reporting original auth failure.
+        // Ignore cleanup errors during auth flow teardown.
       }
       try {
         if (ctx) await ctx.close();
       } catch {
-        // Ignore cleanup errors while reporting original auth failure.
+        // Ignore cleanup errors during auth flow teardown.
       }
-      res.status(500).json({ error: errMsg });
     }
   }
 );
@@ -361,16 +375,42 @@ app.post('/api/debates/:id/run', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
+    const abortController = new AbortController();
+    let clientClosed = false;
+    req.on('close', () => {
+      clientClosed = true;
+      abortController.abort();
+    });
 
     try {
-      await runFullDebate(req.params.id, (turn) => {
-        res.write(`data: ${JSON.stringify(turn)}\n\n`);
-      });
-      res.write('data: [DONE]\n\n');
-      res.end();
+      await runFullDebate(
+        req.params.id,
+        (turn) => {
+          if (clientClosed || res.writableEnded) return;
+          res.write(`data: ${JSON.stringify(turn)}\n\n`);
+        },
+        abortController.signal
+      );
+      if (!res.writableEnded) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
     } catch (err: unknown) {
-      res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
-      res.end();
+      if (clientClosed || res.writableEnded) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (message === 'Debate run aborted') {
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+      res.write('event: error\n');
+      res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
+      if (!res.writableEnded) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
     }
   } else {
     try {
@@ -398,4 +438,3 @@ process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
 export default app;
-

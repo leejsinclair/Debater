@@ -66,6 +66,4 @@ export interface DebateHistoryResponse {
 
 export interface AuthStatus {
   authenticated: boolean;
-  path: string;
 }
-

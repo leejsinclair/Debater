@@ -17,7 +17,7 @@ frontend (React + Vite + Tailwind)
        ↓ HTTP / SSE
 backend (Node.js + TypeScript + Express)
        ↓ Playwright browser automation
-  chat.openai.com    gemini.google.com
+     chatgpt.com     gemini.google.com
 ```
 
 ---
@@ -48,7 +48,7 @@ ROUND_2_AI1 → ROUND_2_AI2 → ROUND_3_AI1 → FINAL_AI1 → FINAL_AI2 → COMP
 ### Prerequisites
 
 - Node.js 20+
-- A free or paid account at [chat.openai.com](https://chat.openai.com) and [gemini.google.com](https://gemini.google.com)
+- A free or paid account at [chatgpt.com](https://chatgpt.com) and [gemini.google.com](https://gemini.google.com)
 
 ### Install
 

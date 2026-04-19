@@ -2,7 +2,7 @@ import { chromium, Browser, BrowserContext } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 
-let sharedBrowser: Browser | null = null;
+const sharedBrowsers = new Map<boolean, Browser>();
 
 /**
  * Returns the singleton Playwright Chromium browser, launching it if needed.
@@ -10,8 +10,9 @@ let sharedBrowser: Browser | null = null;
  * CAPTCHA / bot-detection challenges.
  */
 export async function getBrowser(headless = false): Promise<Browser> {
-  if (!sharedBrowser || !sharedBrowser.isConnected()) {
-    sharedBrowser = await chromium.launch({
+  const existing = sharedBrowsers.get(headless);
+  if (!existing || !existing.isConnected()) {
+    const launched = await chromium.launch({
       headless,
       args: [
         '--disable-blink-features=AutomationControlled',
@@ -19,8 +20,10 @@ export async function getBrowser(headless = false): Promise<Browser> {
         '--disable-setuid-sandbox',
       ],
     });
+    sharedBrowsers.set(headless, launched);
+    return launched;
   }
-  return sharedBrowser;
+  return existing;
 }
 
 /**
@@ -80,8 +83,9 @@ export async function findElement(
  * Closes the shared browser instance.
  */
 export async function closeBrowser(): Promise<void> {
-  if (sharedBrowser) {
-    await sharedBrowser.close();
-    sharedBrowser = null;
+  const browsers = Array.from(sharedBrowsers.values());
+  sharedBrowsers.clear();
+  if (browsers.length > 0) {
+    await Promise.all(browsers.map((browser) => browser.close().catch(() => {})));
   }
 }

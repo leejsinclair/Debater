@@ -11,7 +11,7 @@ export async function getAuthStatus(): Promise<Record<string, AuthStatus>> {
 export async function startAuth(
   provider: 'chatgpt' | 'gemini',
   timeoutMs = 300_000
-): Promise<{ success: boolean; provider: string; savedTo: string }> {
+): Promise<{ success: boolean; provider: string }> {
   const res = await fetch(`${BASE}/browser/auth/${provider}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -52,6 +52,19 @@ export async function runDebate(
   const decoder = new TextDecoder();
   let buffer = '';
   let done = false;
+  let eventType = 'message';
+
+  function isDebateTurn(value: unknown): value is import('./types').DebateTurn {
+    if (typeof value !== 'object' || value === null) return false;
+    const turn = value as Record<string, unknown>;
+    return (
+      typeof turn.state === 'string' &&
+      typeof turn.participantId === 'string' &&
+      typeof turn.participantName === 'string' &&
+      typeof turn.content === 'string' &&
+      typeof turn.timestamp === 'number'
+    );
+  }
 
   while (!done) {
     const chunk = await reader.read();
@@ -62,6 +75,10 @@ export async function runDebate(
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
     for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventType = line.slice(7).trim() || 'message';
+        continue;
+      }
       if (line.startsWith('data: ')) {
         const data = line.slice(6).trim();
         if (data === '[DONE]') {
@@ -69,9 +86,34 @@ export async function runDebate(
           return;
         }
         try {
-          onTurn(JSON.parse(data));
-        } catch {
-          // ignore parse errors
+          const parsed = JSON.parse(data) as unknown;
+          if (eventType === 'error') {
+            const errorMessage =
+              typeof parsed === 'object' &&
+              parsed !== null &&
+              'error' in parsed &&
+              typeof (parsed as { error?: unknown }).error === 'string'
+                ? (parsed as { error: string }).error
+                : 'Debate stream failed';
+            throw new Error(errorMessage);
+          }
+          if (isDebateTurn(parsed)) {
+            onTurn(parsed);
+          } else if (
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            'error' in parsed &&
+            typeof (parsed as { error?: unknown }).error === 'string'
+          ) {
+            throw new Error((parsed as { error: string }).error);
+          }
+        } catch (err: unknown) {
+          if (err instanceof Error) {
+            throw err;
+          }
+          throw new Error('Debate stream parse error');
+        } finally {
+          eventType = 'message';
         }
       }
     }
@@ -114,4 +156,3 @@ export async function resumeDebate(
 ): Promise<void> {
   return runDebate(sessionId, onTurn, signal);
 }
-

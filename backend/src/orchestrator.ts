@@ -325,13 +325,15 @@ export async function advanceDebate(
 
 export async function runFullDebate(
   sessionId: string,
-  onTurn?: (turn: DebateTurn) => void
+  onTurn?: (turn: DebateTurn) => void,
+  signal?: AbortSignal
 ): Promise<DebateSession> {
   let session = sessions.get(sessionId);
   if (!session) throw new Error(`Session not found: ${sessionId}`);
 
   try {
     while (session.state !== 'COMPLETE') {
+      if (signal?.aborted) throw new Error('Debate run aborted');
       session = await advanceDebate(sessionId, onTurn);
       if (session.state === 'COMPLETE') break;
     }
@@ -347,4 +349,3 @@ export async function runFullDebate(
 export async function shutdown(): Promise<void> {
   await closeBrowser();
 }
-
