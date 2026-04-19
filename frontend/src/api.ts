@@ -1,4 +1,4 @@
-import { DebateSession, FrameworkConfig, AuthStatus } from './types';
+import { DebateSession, FrameworkConfig, AuthStatus, DebateHistoryResponse } from './types';
 
 const BASE = '/api';
 
@@ -51,10 +51,13 @@ export async function runDebate(
 
   const decoder = new TextDecoder();
   let buffer = '';
+  let done = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
+  while (!done) {
+    const chunk = await reader.read();
+    done = chunk.done;
     if (done) break;
+    const value = chunk.value;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
@@ -79,5 +82,36 @@ export async function getDebate(sessionId: string): Promise<DebateSession> {
   const res = await fetch(`${BASE}/debates/${sessionId}`);
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+export async function getHistory(
+  page = 1,
+  pageSize = 8,
+  query = ''
+): Promise<DebateHistoryResponse> {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+  if (query.trim()) {
+    params.set('q', query.trim());
+  }
+
+  const res = await fetch(`${BASE}/history?${params.toString()}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteHistory(sessionId: string): Promise<void> {
+  const res = await fetch(`${BASE}/history/${sessionId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function resumeDebate(
+  sessionId: string,
+  onTurn: (turn: import('./types').DebateTurn | null) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  return runDebate(sessionId, onTurn, signal);
 }
 

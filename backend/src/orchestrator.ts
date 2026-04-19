@@ -1,7 +1,11 @@
 import { randomUUID } from 'crypto';
 import { BrowserContext } from 'playwright';
+import fs from 'fs';
+import path from 'path';
 import {
   DebateConfig,
+  DebateHistoryResponse,
+  DebateHistorySummary,
   DebateSession,
   DebateState,
   DebateTurn,
@@ -15,6 +19,11 @@ import { buildPrompt } from './message-builder';
 
 // In-memory session store
 const sessions = new Map<string, DebateSession>();
+
+const PERSISTENCE_ENABLED =
+  process.env.DISABLE_SESSION_PERSISTENCE !== 'true' && process.env.NODE_ENV !== 'test';
+const SESSION_STORAGE_DIR =
+  process.env.DEBATE_STORAGE_DIR ?? path.join(process.cwd(), 'data', 'conversations');
 
 // Browser contexts keyed by sessionId → participantId → BrowserContext
 const sessionContexts = new Map<string, Map<string, BrowserContext>>();
@@ -30,6 +39,38 @@ const STATE_SEQUENCE: DebateState[] = [
   'FINAL_AI2',
   'COMPLETE',
 ];
+
+function ensureStorageDir(): void {
+  if (!PERSISTENCE_ENABLED) return;
+  fs.mkdirSync(SESSION_STORAGE_DIR, { recursive: true });
+}
+
+function sessionFilePath(id: string): string {
+  return path.join(SESSION_STORAGE_DIR, `${id}.json`);
+}
+
+function persistSession(session: DebateSession): void {
+  if (!PERSISTENCE_ENABLED) return;
+  ensureStorageDir();
+  fs.writeFileSync(sessionFilePath(session.id), JSON.stringify(session, null, 2), 'utf-8');
+}
+
+function hydrateSessionsFromDisk(): void {
+  if (!PERSISTENCE_ENABLED) return;
+  ensureStorageDir();
+  const files = fs.readdirSync(SESSION_STORAGE_DIR).filter((file) => file.endsWith('.json'));
+  for (const fileName of files) {
+    try {
+      const raw = fs.readFileSync(path.join(SESSION_STORAGE_DIR, fileName), 'utf-8');
+      const session = JSON.parse(raw) as DebateSession;
+      if (session?.id) {
+        sessions.set(session.id, session);
+      }
+    } catch {
+      // Ignore malformed files so a single bad file doesn't break startup.
+    }
+  }
+}
 
 function nextState(current: DebateState, socraticEnabled: boolean): DebateState {
   if (current === 'IDLE') return 'ROUND_1_AI1';
@@ -56,6 +97,8 @@ function defaultFrameworks(): FrameworkConfig {
     synthesisRound: 5,
   };
 }
+
+hydrateSessionsFromDisk();
 
 function defaultPersonas(overrides: Partial<PersonaConfig>[]): PersonaConfig[] {
   const defaults: PersonaConfig[] = [
@@ -151,6 +194,7 @@ export function createSession(
     updatedAt: Date.now(),
   };
   sessions.set(id, session);
+  persistSession(session);
   return session;
 }
 
@@ -158,8 +202,77 @@ export function getSession(id: string): DebateSession | undefined {
   return sessions.get(id);
 }
 
+export async function deleteSession(id: string): Promise<boolean> {
+  const existed = sessions.delete(id);
+  await cleanupContexts(id);
+
+  if (PERSISTENCE_ENABLED) {
+    const filePath = sessionFilePath(id);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  }
+
+  return existed;
+}
+
 export function listSessions(): DebateSession[] {
-  return Array.from(sessions.values());
+  return Array.from(sessions.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function buildSummary(session: DebateSession): DebateHistorySummary {
+  const lastTurn = session.history.length > 0 ? session.history[session.history.length - 1] : undefined;
+  const compact = (lastTurn?.content ?? '').replace(/\s+/g, ' ').trim();
+  const maxSnippetLength = 180;
+  const lastResponseSnippet =
+    compact.length > maxSnippetLength ? `${compact.slice(0, maxSnippetLength - 1)}…` : compact;
+
+  return {
+    id: session.id,
+    question: session.config.question,
+    state: session.state,
+    lastParticipantName: lastTurn?.participantName ?? null,
+    lastResponseSnippet,
+    turnCount: session.history.length,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+  };
+}
+
+export function listHistorySummaries(): DebateHistorySummary[] {
+  return listSessions().map(buildSummary);
+}
+
+export function listHistoryPage(
+  query = '',
+  page = 1,
+  pageSize = 10
+): DebateHistoryResponse {
+  const normalizedQuery = query.trim().toLowerCase();
+  const source = listHistorySummaries();
+  const filtered =
+    normalizedQuery.length === 0
+      ? source
+      : source.filter((item) => {
+          const haystack = [item.question, item.lastParticipantName ?? '', item.lastResponseSnippet]
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(normalizedQuery);
+        });
+
+  const safePageSize = Math.max(1, Math.min(pageSize, 50));
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+  const safePage = Math.max(1, Math.min(page, totalPages));
+  const start = (safePage - 1) * safePageSize;
+
+  return {
+    items: filtered.slice(start, start + safePageSize),
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages,
+  };
 }
 
 export async function advanceDebate(
@@ -176,6 +289,7 @@ export async function advanceDebate(
   if (nextStateValue === 'COMPLETE') {
     session.state = 'COMPLETE';
     session.updatedAt = Date.now();
+    persistSession(session);
     await cleanupContexts(sessionId);
     return session;
   }
@@ -202,6 +316,7 @@ export async function advanceDebate(
   session.history.push(turn);
   session.state = nextStateValue;
   session.updatedAt = Date.now();
+  persistSession(session);
 
   if (onTurn) onTurn(turn);
 

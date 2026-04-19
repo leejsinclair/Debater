@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { DebateSession, DebateTurn, FrameworkConfig, AuthStatus } from './types';
-import { createDebate, runDebate, getAuthStatus, startAuth } from './api';
+import { DebateSession, DebateTurn, FrameworkConfig, AuthStatus, DebateHistorySummary } from './types';
+import { createDebate, runDebate, getAuthStatus, startAuth, getHistory, getDebate, deleteHistory, resumeDebate } from './api';
 
 const STATE_LABELS: Record<string, string> = {
   ROUND_1_AI1: 'Round 1 — Opening (Toulmin structure)',
@@ -71,6 +71,16 @@ function FrameworkToggle({
 type AppStatus = 'idle' | 'loading' | 'running' | 'complete' | 'error';
 type AuthingProvider = 'chatgpt' | 'gemini' | null;
 
+function formatDate(ts: number): string {
+  return new Date(ts).toLocaleString();
+}
+
+function truncate(text: string, max = 180): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (!compact) return 'No responses yet.';
+  return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
+}
+
 export default function App() {
   const [question, setQuestion] = useState('');
   const [frameworks, setFrameworks] = useState<FrameworkConfig>(DEFAULT_FRAMEWORKS);
@@ -80,6 +90,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<Record<string, AuthStatus>>({});
   const [authingProvider, setAuthingProvider] = useState<AuthingProvider>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyItems, setHistoryItems] = useState<DebateHistorySummary[]>([]);
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotalPages, setHistoryTotalPages] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -142,18 +161,127 @@ export default function App() {
         },
         ac.signal
       );
+
+      const refreshed = await getDebate(newSession.id);
+      setSession(refreshed);
+      if (showHistory) {
+        try {
+          const payload = await getHistory(historyPage, 8, historyQuery);
+          setHistoryItems(payload.items);
+          setHistoryPage(payload.page);
+          setHistoryTotalPages(payload.totalPages);
+          setHistoryTotal(payload.total);
+        } catch {
+          // Keep debate flow successful even if history refresh fails.
+        }
+      }
     } catch (err: unknown) {
       if ((err as Error).name !== 'AbortError') {
         setError(String(err));
         setStatus('error');
       }
     }
-  }, [question, frameworks, scrollToBottom]);
+  }, [frameworks, historyPage, historyQuery, question, scrollToBottom, showHistory]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
     setStatus('idle');
   }, []);
+
+  const loadHistory = useCallback(async (page = historyPage, query = historyQuery) => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const payload = await getHistory(page, 8, query);
+      setHistoryItems(payload.items);
+      setHistoryPage(payload.page);
+      setHistoryTotalPages(payload.totalPages);
+      setHistoryTotal(payload.total);
+    } catch (err: unknown) {
+      setHistoryError(String(err));
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [historyPage, historyQuery]);
+
+  const handleToggleHistory = useCallback(() => {
+    setShowHistory((prev) => {
+      const next = !prev;
+      if (next) {
+        void loadHistory(1, historyQuery);
+      }
+      return next;
+    });
+  }, [historyQuery, loadHistory]);
+
+  const handleOpenHistoryItem = useCallback(async (sessionId: string) => {
+    setError(null);
+    try {
+      const saved = await getDebate(sessionId);
+      setSession(saved);
+      setQuestion(saved.config.question);
+      setFrameworks(saved.config.frameworks);
+      setTurns(saved.history);
+      setStatus(saved.state === 'COMPLETE' ? 'complete' : 'idle');
+      setTimeout(scrollToBottom, 100);
+    } catch (err: unknown) {
+      setError(String(err));
+    }
+  }, [scrollToBottom]);
+
+  const handleDeleteHistoryItem = useCallback(async (sessionId: string) => {
+    setHistoryError(null);
+    setDeletingId(sessionId);
+    try {
+      await deleteHistory(sessionId);
+      if (session?.id === sessionId) {
+        setSession(null);
+        setTurns([]);
+        setStatus('idle');
+      }
+      const nextPage = historyItems.length === 1 ? Math.max(1, historyPage - 1) : historyPage;
+      await loadHistory(nextPage, historyQuery);
+    } catch (err: unknown) {
+      setHistoryError(String(err));
+    } finally {
+      setDeletingId(null);
+    }
+  }, [historyItems.length, historyPage, historyQuery, loadHistory, session?.id]);
+
+  const handleResume = useCallback(async () => {
+    if (!session || session.state === 'COMPLETE') return;
+    setError(null);
+    setStatus('running');
+
+    try {
+      const ac = new AbortController();
+      abortRef.current = ac;
+
+      await resumeDebate(
+        session.id,
+        (turn) => {
+          if (turn === null) {
+            setStatus('complete');
+          } else {
+            setTurns((prev) => [...prev, turn]);
+            setTimeout(scrollToBottom, 100);
+          }
+        },
+        ac.signal
+      );
+
+      const refreshed = await getDebate(session.id);
+      setSession(refreshed);
+      if (showHistory) {
+        await loadHistory(historyPage, historyQuery);
+      }
+    } catch (err: unknown) {
+      if ((err as Error).name !== 'AbortError') {
+        setError(String(err));
+        setStatus('error');
+      }
+    }
+  }, [historyPage, historyQuery, loadHistory, scrollToBottom, session, showHistory]);
 
   const handleReset = useCallback(() => {
     abortRef.current?.abort();
@@ -230,7 +358,104 @@ export default function App() {
 
         {/* Question input */}
         <section className="bg-white rounded-xl shadow p-6 mb-6">
-          <h2 className="text-lg font-semibold mb-3">Debate Question</h2>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 className="text-lg font-semibold">Debate Question</h2>
+            <button
+              onClick={handleToggleHistory}
+              className="px-3 py-1.5 text-xs bg-gray-800 text-white rounded-md hover:bg-gray-900 transition"
+            >
+              {showHistory ? 'Hide History' : 'Show History'}
+            </button>
+          </div>
+
+          {showHistory && (
+            <div className="mb-4 border border-gray-200 rounded-lg p-3 bg-gray-50">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-gray-700">Discussion History</h3>
+                <button
+                  onClick={() => void loadHistory(historyPage, historyQuery)}
+                  className="text-xs text-indigo-700 hover:text-indigo-900"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <input
+                  value={historyQuery}
+                  onChange={(e) => setHistoryQuery(e.target.value)}
+                  placeholder="Search by question or response..."
+                  className="w-full sm:max-w-sm border border-gray-300 rounded-md px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+                <button
+                  onClick={() => void loadHistory(1, historyQuery)}
+                  className="px-2.5 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                >
+                  Search
+                </button>
+              </div>
+
+              {historyLoading && <p className="text-xs text-gray-500">Loading history…</p>}
+              {historyError && <p className="text-xs text-red-600">{historyError}</p>}
+              {!historyLoading && !historyError && historyItems.length === 0 && (
+                <p className="text-xs text-gray-500">No saved discussions yet.</p>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {historyItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="text-left border border-gray-200 rounded-lg p-3 bg-white hover:border-indigo-300 hover:shadow-sm transition"
+                  >
+                    <p className="text-sm font-medium text-gray-900 mb-1 line-clamp-2">{item.question}</p>
+                    <p className="text-xs text-gray-600 mb-2">{truncate(item.lastResponseSnippet)}</p>
+                    <div className="text-[11px] text-gray-500 flex items-center justify-between">
+                      <span>{item.lastParticipantName ?? 'No bot response yet'}</span>
+                      <span>{formatDate(item.updatedAt)}</span>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => void handleOpenHistoryItem(item.id)}
+                        className="px-2 py-1 text-[11px] bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                      >
+                        Open
+                      </button>
+                      <button
+                        onClick={() => void handleDeleteHistoryItem(item.id)}
+                        disabled={deletingId === item.id}
+                        className="px-2 py-1 text-[11px] bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
+                      >
+                        {deletingId === item.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {!historyLoading && historyItems.length > 0 && (
+                <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+                  <span>{`Showing page ${historyPage} of ${historyTotalPages} (${historyTotal} total)`}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => void loadHistory(Math.max(1, historyPage - 1), historyQuery)}
+                      disabled={historyPage <= 1}
+                      className="px-2 py-1 border border-gray-300 rounded disabled:opacity-50"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      onClick={() => void loadHistory(Math.min(historyTotalPages, historyPage + 1), historyQuery)}
+                      disabled={historyPage >= historyTotalPages}
+                      className="px-2 py-1 border border-gray-300 rounded disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <textarea
             className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400"
             rows={3}
@@ -275,6 +500,15 @@ export default function App() {
             >
               {status === 'loading' ? 'Starting\u2026' : 'Start Debate'}
             </button>
+            {session && session.state !== 'COMPLETE' && !isRunning && (
+              <button
+                onClick={handleResume}
+                disabled={!allAuthenticated}
+                className="px-5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                Resume Debate
+              </button>
+            )}
             {isRunning && (
               <button
                 onClick={handleStop}
@@ -283,7 +517,7 @@ export default function App() {
                 Stop
               </button>
             )}
-            {(status === 'complete' || status === 'error') && (
+            {(status === 'complete' || status === 'error' || (session !== null && !isRunning)) && (
               <button
                 onClick={handleReset}
                 className="px-5 py-2 bg-gray-500 text-white rounded-lg text-sm font-medium hover:bg-gray-600 transition"

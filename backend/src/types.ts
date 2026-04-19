@@ -56,6 +56,25 @@ export interface DebateSession {
   updatedAt: number;
 }
 
+export interface DebateHistorySummary {
+  id: string;
+  question: string;
+  state: DebateState;
+  lastParticipantName: string | null;
+  lastResponseSnippet: string;
+  turnCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DebateHistoryResponse {
+  items: DebateHistorySummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export interface StartDebateRequest {
   question: string;
   participants?: Partial<PersonaConfig>[];

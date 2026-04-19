@@ -5,7 +5,9 @@ import fs from 'fs';
 import path from 'path';
 import {
   createSession,
+  deleteSession,
   getSession,
+  listHistoryPage,
   listSessions,
   advanceDebate,
   runFullDebate,
@@ -74,18 +76,92 @@ app.get(
 );
 
 /**
- * Returns true when the given URL is no longer on an auth/login page.
- * Uses hostname matching to avoid substring-in-subdomain false positives.
+ * Returns true when ChatGPT is authenticated. 
+ * Login page has #prompt-textarea too (fallback), so we must check the URL is NOT a login page,
+ * AND that we can find authenticated-only elements like conversation history or the nav menu.
  */
-function isPostLoginUrl(u: URL): boolean {
-  const hostname = u.hostname;
-  const isGoogleAuth =
-    hostname === 'accounts.google.com' || hostname.endsWith('.accounts.google.com');
-  const isLoginPath =
-    u.pathname.includes('/login') ||
-    u.pathname.includes('/signin') ||
-    u.pathname.includes('/auth');
-  return !isGoogleAuth && !isLoginPath;
+async function isChatGPTAuthenticated(page: import('playwright').Page): Promise<boolean> {
+  try {
+    const url = page.url();
+    
+    // Reject if on OAuth redirect or login pages
+    if (/auth\.openai\.com|\/login|\/signin|\/auth-callback/i.test(url)) {
+      return false;
+    }
+    
+    // Must be on the main chat page
+    if (!url.includes('chatgpt.com/c/') && !url.includes('chatgpt.com/')) {
+      return false;
+    }
+
+    // The header login button is a reliable signal that the user is not signed in.
+    const loginButton = page.locator('button[data-testid="login-button"]').first();
+    if (await loginButton.isVisible({ timeout: 1_000 }).catch(() => false)) {
+      console.log('[Auth] ChatGPT login button still visible');
+      return false;
+    }
+    
+    // Look for authenticated UI elements that don't exist on login page.
+    // Include the account icon selector observed by the user.
+    const authenticatedSelectors = [
+      '[id^="radix-"] div.icon-lg',
+      'button[aria-label*="New chat"]',
+      'button[data-testid*="user" i]',
+      'div[class*="sidebar"]',
+      'button[aria-label*="account"]',
+      'div[class*="conversation"]',
+    ];
+    
+    for (const sel of authenticatedSelectors) {
+      const el = page.locator(sel).first();
+      if (await el.isVisible({ timeout: 1_000 }).catch(() => false)) {
+        console.log(`[Auth] ChatGPT authenticated indicator found: ${sel}`);
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (e) {
+    console.log(`[Auth] ChatGPT check failed: ${String(e)}`);
+    return false;
+  }
+}
+
+/**
+ * Returns true when Gemini is authenticated (on main page with input visible, not on Google login).
+ */
+async function isGeminiAuthenticated(page: import('playwright').Page): Promise<boolean> {
+  try {
+    const url = page.url();
+    // Explicitly reject Google auth pages
+    if (/accounts\.google\.com|signin|ServiceLogin/i.test(url)) {
+      console.log(`[Auth] Gemini on Google auth page: ${url}`);
+      return false;
+    }
+    // Explicitly check we're on gemini.google.com/
+    if (!url.includes('gemini.google.com')) {
+      console.log(`[Auth] Gemini on unexpected URL: ${url}`);
+      return false;
+    }
+    
+    // Check for authenticated UI on the main Gemini page
+    const selectors = [
+      'div.ql-editor[contenteditable="true"]',  // Quill editor
+      'textarea[aria-label*="Message"]',
+      'textarea[aria-label*="message"]',
+    ];
+    for (const sel of selectors) {
+      const isVisible = await page.locator(sel).first().isVisible({ timeout: 1_500 }).catch(() => false);
+      if (isVisible) {
+        console.log(`[Auth] Gemini authenticated UI detected: ${sel}`);
+        return true;
+      }
+    }
+    return false;
+  } catch (e) {
+    console.log(`[Auth] Gemini check failed: ${String(e)}`);
+    return false;
+  }
 }
 
 /**
@@ -104,32 +180,97 @@ app.post(
       res.status(400).json({ error: `Unknown provider: ${provider}` });
       return;
     }
-    const timeoutMs = (req.body as { timeoutMs?: number }).timeoutMs ?? 300_000;
+    const timeoutMs = (req.body as { timeoutMs?: number }).timeoutMs ?? 15 * 60_000; // 15 minutes
     const authPath = AUTH_PATHS[provider];
+
+    let ctx: import('playwright').BrowserContext | null = null;
+    let page: import('playwright').Page | null = null;
 
     try {
       // Always open a visible browser for auth so the user can interact
-      const ctx = await createContext(false, undefined);
-      const page = await ctx.newPage();
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      ctx = await createContext(false, undefined);
+      page = await ctx.newPage();
+      
+      console.log(`[Auth] Opening browser for ${provider} at ${url}...`);
+      await page.goto(url, { waitUntil: 'load', timeout: 60_000 });
 
       console.log(
-        `[Auth] Browser opened for ${provider}. ` +
-          `Please log in within ${Math.round(timeoutMs / 1000)}s. ` +
-          `Waiting for navigation away from the login page…`
+        `[Auth] ✓ Browser opened for ${provider}. ` +
+          `Please log in now. Checking every 2 seconds for ${Math.round(timeoutMs / 1000)}s...`
       );
 
-      // Wait for the user to land on the main app page (no longer on a login/auth URL)
-      await page.waitForURL((u) => isPostLoginUrl(new URL(u.toString())), {
-        timeout: timeoutMs,
-      });
+      // Give the page a moment to fully render
+      await page.waitForTimeout(2_000);
 
-      await saveContextState(ctx, authPath);
-      await ctx.close();
+      // Poll for authentication until we detect logged-in state
+      const startTime = Date.now();
+      let isAuthenticated = false;
+      let checkCount = 0;
+      while (Date.now() - startTime < timeoutMs && !page.isClosed()) {
+        checkCount++;
+        let checkResult = false;
+        try {
+          if (provider === 'chatgpt') {
+            checkResult = await isChatGPTAuthenticated(page);
+          } else if (provider === 'gemini') {
+            checkResult = await isGeminiAuthenticated(page);
+          }
+        } catch (checkErr) {
+          console.log(`[Auth] Check #${checkCount} error: ${String(checkErr)}`);
+        }
+
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        if (checkResult) {
+          console.log(`[Auth] Check #${checkCount} (${elapsed}s): ${provider} authenticated = true`);
+        } else if (checkCount % 5 === 0 || checkCount <= 3) {
+          console.log(`[Auth] Check #${checkCount} (${elapsed}s): waiting...`);
+        }
+
+        if (checkResult) {
+          isAuthenticated = true;
+          console.log(`[Auth] ✓ Login detected for ${provider}! Saving session…`);
+          break;
+        }
+
+        // Wait 2 seconds before checking again
+        try {
+          await page.waitForTimeout(2_000);
+        } catch {
+          // page may have closed
+          break;
+        }
+      }
+
+      if (page.isClosed()) {
+        throw new Error(`${provider}: browser window was closed. Please try again.`);
+      }
+
+      if (!isAuthenticated) {
+        throw new Error(
+          `${provider}: did not detect login after ${Math.round(timeoutMs / 1000)}s. ` +
+            `Please complete the login and try again.`
+        );
+      }
+
+      await saveContextState(ctx!, authPath);
+      await ctx!.close();
 
       res.json({ success: true, provider, savedTo: authPath });
     } catch (err: unknown) {
-      res.status(500).json({ error: String(err) });
+      const errMsg = String(err);
+      console.error(`[Auth] ✗ Error for ${provider}: ${errMsg}`);
+      // Try to close the page/context if still open
+      try {
+        if (page && !page.isClosed()) await page.close();
+      } catch {
+        // Ignore cleanup errors while reporting original auth failure.
+      }
+      try {
+        if (ctx) await ctx.close();
+      } catch {
+        // Ignore cleanup errors while reporting original auth failure.
+      }
+      res.status(500).json({ error: errMsg });
     }
   }
 );
@@ -157,6 +298,30 @@ app.post('/api/debates', (req: Request, res: Response) => {
 // List all sessions
 app.get('/api/debates', (_req: Request, res: Response) => {
   res.json(listSessions());
+});
+
+// List persisted debate history summaries
+app.get('/api/history', (_req: Request, res: Response) => {
+  const q = typeof _req.query.q === 'string' ? _req.query.q : '';
+  const page = Number.parseInt(String(_req.query.page ?? '1'), 10);
+  const pageSize = Number.parseInt(String(_req.query.pageSize ?? '10'), 10);
+  res.json(
+    listHistoryPage(q, Number.isNaN(page) ? 1 : page, Number.isNaN(pageSize) ? 10 : pageSize)
+  );
+});
+
+// Delete persisted history entry by session id
+app.delete('/api/history/:id', async (req: Request, res: Response) => {
+  try {
+    const deleted = await deleteSession(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    res.status(204).send();
+  } catch (err: unknown) {
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 // Get a session
