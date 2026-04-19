@@ -4,11 +4,15 @@ A multi-round AI debate orchestrator that automates the **ChatGPT** and **Gemini
 
 **No API keys required.** The application drives the real chat interfaces in a browser window — the same way you would use them yourself.
 
+## UI Preview
+
+![Debater UI Screenshot](docs/example.png)
+
 ---
 
 ## Architecture
 
-```
+```text
 frontend (React + Vite + Tailwind)
        ↓ HTTP / SSE
 backend (Node.js + TypeScript + Express)
@@ -21,7 +25,7 @@ backend (Node.js + TypeScript + Express)
 ## Reasoning Frameworks
 
 | Framework | Application |
-|-----------|-------------|
+| --------- | ----------- |
 | **Toulmin Model** | Round 1 opening — Claim, Data, Warrant, Backing, Qualifier, Rebuttal |
 | **5 Whys** | Counter-argument — drill to root assumptions |
 | **Steel-Manning** | Every counter — state the strongest version first |
@@ -32,7 +36,7 @@ backend (Node.js + TypeScript + Express)
 
 ## Debate State Machine
 
-```
+```text
 IDLE → ROUND_1_AI1 → ROUND_1_AI2 → SOCRATIC_INTERLUDE →
 ROUND_2_AI1 → ROUND_2_AI2 → ROUND_3_AI1 → FINAL_AI1 → FINAL_AI2 → COMPLETE
 ```
@@ -75,14 +79,14 @@ cp .env.example .env
 npm run dev
 ```
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:3001
+- Frontend: <http://localhost:5173>
+- Backend API: <http://localhost:3001>
 
 ### Authenticate (one-time setup)
 
 Before running a debate, you need to log in to each AI service once:
 
-1. Open the Debater frontend at http://localhost:5173
+1. Open the Debater frontend at <http://localhost:5173>
 2. In the **Browser Authentication** panel, click **Log in** next to **ChatGPT**
 3. A browser window opens — sign in to your ChatGPT account as normal
 4. Once logged in, the window closes automatically and your session is saved
@@ -142,6 +146,18 @@ The Playwright approach is more fragile than REST APIs. Be aware:
 
 ```bash
 npm test --workspace=backend
+```
+
+## Linting
+
+```bash
+npm run lint
+```
+
+Auto-fix lint issues:
+
+```bash
+npm run lint:fix
 ```
 
 Chatbot debater
