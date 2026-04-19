@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+auth-states/
+backend/data/conversations/38e3c692-7c9c-4eb5-9c86-1476cd831491.json
