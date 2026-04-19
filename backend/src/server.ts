@@ -10,6 +10,7 @@ import {
   listHistoryPage,
   listSessions,
   advanceDebate,
+  DebateAbortedError,
   runFullDebate,
   shutdown,
 } from './orchestrator';
@@ -21,6 +22,8 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT ?? 3001;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
+// Comma-separated list of allowed origins for browser clients.
+// Falls back to FRONTEND_ORIGIN when CORS_ORIGINS is not provided.
 const CORS_ORIGINS = (process.env.CORS_ORIGINS ?? FRONTEND_ORIGIN)
   .split(',')
   .map((origin) => origin.trim())
@@ -399,12 +402,12 @@ app.post('/api/debates/:id/run', async (req: Request, res: Response) => {
       if (clientClosed || res.writableEnded) {
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
-      if (message === 'Debate run aborted') {
+      if (err instanceof DebateAbortedError) {
         res.write('data: [DONE]\n\n');
         res.end();
         return;
       }
+      const message = err instanceof Error ? err.message : String(err);
       res.write('event: error\n');
       res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
       if (!res.writableEnded) {

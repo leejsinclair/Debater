@@ -1,4 +1,10 @@
-import { DebateSession, FrameworkConfig, AuthStatus, DebateHistoryResponse } from './types';
+import {
+  DebateSession,
+  FrameworkConfig,
+  AuthStatus,
+  DebateHistoryResponse,
+  DebateTurn,
+} from './types';
 
 const BASE = '/api';
 
@@ -37,7 +43,7 @@ export async function createDebate(
 
 export async function runDebate(
   sessionId: string,
-  onTurn: (turn: import('./types').DebateTurn | null) => void,
+  onTurn: (turn: DebateTurn | null) => void,
   signal?: AbortSignal
 ): Promise<void> {
   const res = await fetch(`${BASE}/debates/${sessionId}/run`, {
@@ -54,7 +60,19 @@ export async function runDebate(
   let done = false;
   let eventType = 'message';
 
-  function isDebateTurn(value: unknown): value is import('./types').DebateTurn {
+  function getErrorMessage(value: unknown): string | null {
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      'error' in value &&
+      typeof (value as { error?: unknown }).error === 'string'
+    ) {
+      return (value as { error: string }).error;
+    }
+    return null;
+  }
+
+  function isDebateTurn(value: unknown): value is DebateTurn {
     if (typeof value !== 'object' || value === null) return false;
     const turn = value as Record<string, unknown>;
     return (
@@ -88,24 +106,13 @@ export async function runDebate(
         try {
           const parsed = JSON.parse(data) as unknown;
           if (eventType === 'error') {
-            const errorMessage =
-              typeof parsed === 'object' &&
-              parsed !== null &&
-              'error' in parsed &&
-              typeof (parsed as { error?: unknown }).error === 'string'
-                ? (parsed as { error: string }).error
-                : 'Debate stream failed';
-            throw new Error(errorMessage);
+            throw new Error(getErrorMessage(parsed) ?? 'Debate stream failed');
           }
           if (isDebateTurn(parsed)) {
             onTurn(parsed);
-          } else if (
-            typeof parsed === 'object' &&
-            parsed !== null &&
-            'error' in parsed &&
-            typeof (parsed as { error?: unknown }).error === 'string'
-          ) {
-            throw new Error((parsed as { error: string }).error);
+          } else {
+            const errorMessage = getErrorMessage(parsed);
+            if (errorMessage) throw new Error(errorMessage);
           }
         } catch (err: unknown) {
           if (err instanceof Error) {

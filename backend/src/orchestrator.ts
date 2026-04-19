@@ -17,6 +17,13 @@ import { sendToChatGPT } from './browser-clients/chatgpt-browser-client';
 import { sendToGemini } from './browser-clients/gemini-browser-client';
 import { buildPrompt } from './message-builder';
 
+export class DebateAbortedError extends Error {
+  constructor() {
+    super('Debate run aborted');
+    this.name = 'DebateAbortedError';
+  }
+}
+
 // In-memory session store
 const sessions = new Map<string, DebateSession>();
 
@@ -333,7 +340,7 @@ export async function runFullDebate(
 
   try {
     while (session.state !== 'COMPLETE') {
-      if (signal?.aborted) throw new Error('Debate run aborted');
+      if (signal?.aborted) throw new DebateAbortedError();
       session = await advanceDebate(sessionId, onTurn);
       if (session.state === 'COMPLETE') break;
     }
