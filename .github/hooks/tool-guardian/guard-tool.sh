@@ -44,10 +44,16 @@ fi
 
 # Fallback: extract with grep/sed if jq unavailable or fields empty
 if [[ -z "$TOOL_NAME" ]]; then
-  TOOL_NAME=$(printf '%s' "$INPUT" | grep -oE '"toolName"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"toolName"\s*:\s*"//;s/"//')
+  TOOL_NAME=$(printf '%s' "$INPUT" | grep -oE '"toolName"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"toolName"\s*:\s*"//;s/"//' || true)
 fi
 if [[ -z "$TOOL_INPUT" ]]; then
-  TOOL_INPUT=$(printf '%s' "$INPUT" | grep -oE '"toolInput"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"toolInput"\s*:\s*"//;s/"//')
+  TOOL_INPUT=$(printf '%s' "$INPUT" | grep -oE '"toolInput"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"toolInput"\s*:\s*"//;s/"//' || true)
+fi
+if [[ -z "$TOOL_INPUT" ]]; then
+  TOOL_INPUT=$(printf '%s' "$INPUT" | grep -oE '"command"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"command"\s*:\s*"//;s/"//' || true)
+fi
+if [[ -z "$TOOL_INPUT" ]]; then
+  TOOL_INPUT="$INPUT"
 fi
 
 # Combine for pattern matching
@@ -90,7 +96,7 @@ PATTERNS=(
   # Destructive file operations
   "destructive_file_ops:::critical:::rm -rf /:::Use targeted 'rm' on specific paths instead of root"
   "destructive_file_ops:::critical:::rm -rf ~:::Use targeted 'rm' on specific paths instead of home directory"
-  "destructive_file_ops:::critical:::rm -rf \.:::Use targeted 'rm' on specific files instead of current directory"
+  "destructive_file_ops:::critical:::rm[[:space:]]+-rf[[:space:]]+(\./?)($|[[:space:];|&]):::Use targeted 'rm' on specific files instead of current directory"
   "destructive_file_ops:::critical:::rm -rf \.\.:::Never remove parent directories recursively"
   "destructive_file_ops:::critical:::(rm|del|unlink).*\.env:::Use 'mv' to back up .env files before removing"
   "destructive_file_ops:::critical:::(rm|del|unlink).*\.git[^i]:::Never delete .git directory — use 'git' commands to manage repo state"
