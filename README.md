@@ -101,7 +101,7 @@ Your credentials are saved as browser cookies in `./auth-states/` and reused aut
 ## API
 
 | Method | Path | Description |
-|--------|------|-------------|
+| -------- | ------ | ------------- |
 | GET | `/api/browser/auth/status` | Check if auth state files exist for each provider |
 | POST | `/api/browser/auth/:provider` | Open browser for manual login; saves session on success |
 | POST | `/api/debates` | Create a new debate session |
@@ -133,7 +133,7 @@ POST /api/debates
 The Playwright approach is more fragile than REST APIs. Be aware:
 
 | Risk | Mitigation |
-|------|-----------|
+| ------ | ----------- |
 | UI selector changes | Selectors use multiple fallbacks; update `chatgpt-browser-client.ts` / `gemini-browser-client.ts` if the UI changes |
 | Bot detection | Browser runs with a realistic user agent; visible mode recommended |
 | Login expiry | Re-authenticate via the frontend panel when sessions expire |
